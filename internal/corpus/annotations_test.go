@@ -196,7 +196,9 @@ func TestExportAnnotations_ProducesValidJSON(t *testing.T) {
 		t.Fatalf("AddProject: %v", err)
 	}
 
-	// Add some annotations
+	// AddAnnotation (legacy surface) creates a solo vulnerability
+	// with one evidence row — export should reflect it as a
+	// single-entry envelope.
 	endLine := 15
 	_, err = svc.AddAnnotation(ctx, "export-test", "auth.go", 10, &endLine, "CWE-89", "sql-injection", "high", "SQL injection", "valid")
 	if err != nil {
@@ -208,14 +210,24 @@ func TestExportAnnotations_ProducesValidJSON(t *testing.T) {
 		t.Fatalf("ExportAnnotations: %v", err)
 	}
 
-	// Verify it's valid JSON
-	var result []AnnotationJSON
+	// New export format: {"vulnerabilities": [...]} envelope.
+	var result vulnFileEnvelope
 	if err := json.Unmarshal(data, &result); err != nil {
 		t.Fatalf("JSON unmarshal: %v", err)
 	}
 
-	if len(result) != 1 {
-		t.Errorf("expected 1 annotation in export, got %d", len(result))
+	if len(result.Vulnerabilities) != 1 {
+		t.Fatalf("expected 1 vulnerability in export, got %d", len(result.Vulnerabilities))
+	}
+	v := result.Vulnerabilities[0]
+	if len(v.Evidence) != 1 {
+		t.Errorf("expected 1 evidence row, got %d", len(v.Evidence))
+	}
+	if v.Evidence[0].File != "auth.go" || v.Evidence[0].Line != 10 {
+		t.Errorf("evidence location mismatch: got %s:%d", v.Evidence[0].File, v.Evidence[0].Line)
+	}
+	if len(v.CWEs) != 1 || v.CWEs[0] != "CWE-89" {
+		t.Errorf("expected CWE-89, got %v", v.CWEs)
 	}
 }
 
@@ -230,13 +242,39 @@ func TestImportExport_RoundTrip_PreservesFields(t *testing.T) {
 		t.Fatalf("AddProject: %v", err)
 	}
 
-	// Original data
-	original := []AnnotationJSON{
-		{FilePath: "auth.go", StartLine: 10, EndLine: intPtr(15), CWEID: "CWE-89", Category: "sql-injection", Severity: "high", Description: "SQL injection in login"},
-		{FilePath: "user.go", StartLine: 20, CWEID: "CWE-79", Category: "xss", Severity: "medium", Description: ""},
+	// Round-trip the new-format vulnerability envelope. This exercises
+	// the fields a legacy []AnnotationJSON export would drop: the CWE
+	// set (>1 per vuln), the annotator list, criticality, and
+	// multi-evidence vulns.
+	original := vulnFileEnvelope{
+		Vulnerabilities: []VulnerabilityJSON{
+			{
+				Name:        "login-sqli",
+				Description: "SQL injection in login",
+				Criticality: "must",
+				Status:      "valid",
+				CWEs:        []string{"CWE-89", "CWE-564"},
+				AnnotatedBy: []string{"alice", "bob"},
+				Evidence: []EvidenceJSON{
+					{File: "auth.go", Line: 10, End: intPtr(15), Role: "sink", Category: "sql-injection", Severity: "high"},
+				},
+			},
+			{
+				Name:        "task-idor",
+				Description: "Tasks resource lacks ownership checks on all handlers",
+				Criticality: "should",
+				Status:      "valid",
+				CWEs:        []string{"CWE-639", "CWE-862"},
+				AnnotatedBy: []string{"carol"},
+				Evidence: []EvidenceJSON{
+					{File: "routes/api.js", Line: 42, Role: "sink", Category: "broken-access-control", Severity: "high"},
+					{File: "routes/tasks.js", Line: 88, End: intPtr(94), Role: "sink", Category: "broken-access-control", Severity: "high"},
+				},
+			},
+		},
 	}
 
-	// Write to file
+	// Write file in new-format envelope
 	jsonData, err := json.Marshal(original)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -246,13 +284,13 @@ func TestImportExport_RoundTrip_PreservesFields(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	// Import
+	// Import — count is evidence-row count on the new-format path
 	count, err := svc.ImportAnnotations(ctx, "roundtrip-test", jsonFile)
 	if err != nil {
 		t.Fatalf("ImportAnnotations: %v", err)
 	}
-	if count != 2 {
-		t.Errorf("expected 2 imported, got %d", count)
+	if count != 3 {
+		t.Errorf("expected 3 evidence rows imported, got %d", count)
 	}
 
 	// Export
@@ -261,43 +299,100 @@ func TestImportExport_RoundTrip_PreservesFields(t *testing.T) {
 		t.Fatalf("ExportAnnotations: %v", err)
 	}
 
-	// Parse exported
-	var result []AnnotationJSON
+	var result vulnFileEnvelope
 	if err := json.Unmarshal(exported, &result); err != nil {
 		t.Fatalf("unmarshal exported: %v", err)
 	}
 
-	if len(result) != 2 {
-		t.Fatalf("expected 2 exported, got %d", len(result))
+	if len(result.Vulnerabilities) != 2 {
+		t.Fatalf("expected 2 vulns exported, got %d", len(result.Vulnerabilities))
 	}
 
-	// Verify fields match
-	for i, r := range result {
-		o := original[i]
-		if r.FilePath != o.FilePath {
-			t.Errorf("[%d] file path: expected %q, got %q", i, o.FilePath, r.FilePath)
+	// Index by name — ListVulnerabilitiesByProject orders by ID, which
+	// tracks insertion order, but matching by name is clearer and more
+	// robust to future sort changes.
+	got := map[string]VulnerabilityJSON{}
+	for _, v := range result.Vulnerabilities {
+		got[v.Name] = v
+	}
+
+	for _, want := range original.Vulnerabilities {
+		g, ok := got[want.Name]
+		if !ok {
+			t.Errorf("vuln %q missing from export", want.Name)
+			continue
 		}
-		if r.StartLine != o.StartLine {
-			t.Errorf("[%d] start line: expected %d, got %d", i, o.StartLine, r.StartLine)
+		if g.Description != want.Description {
+			t.Errorf("%s: description = %q, want %q", want.Name, g.Description, want.Description)
 		}
-		if (r.EndLine == nil) != (o.EndLine == nil) {
-			t.Errorf("[%d] end line mismatch: expected %v, got %v", i, o.EndLine, r.EndLine)
-		} else if r.EndLine != nil && o.EndLine != nil && *r.EndLine != *o.EndLine {
-			t.Errorf("[%d] end line: expected %d, got %d", i, *o.EndLine, *r.EndLine)
+		if g.Criticality != want.Criticality {
+			t.Errorf("%s: criticality = %q, want %q", want.Name, g.Criticality, want.Criticality)
 		}
-		if r.CWEID != o.CWEID {
-			t.Errorf("[%d] CWE ID: expected %q, got %q", i, o.CWEID, r.CWEID)
+		if g.Status != want.Status {
+			t.Errorf("%s: status = %q, want %q", want.Name, g.Status, want.Status)
 		}
-		if r.Category != o.Category {
-			t.Errorf("[%d] category: expected %q, got %q", i, o.Category, r.Category)
+		if !sameStringSet(g.CWEs, want.CWEs) {
+			t.Errorf("%s: CWEs = %v, want %v", want.Name, g.CWEs, want.CWEs)
 		}
-		if r.Severity != o.Severity {
-			t.Errorf("[%d] severity: expected %q, got %q", i, o.Severity, r.Severity)
+		if !sameStringSet(g.AnnotatedBy, want.AnnotatedBy) {
+			t.Errorf("%s: AnnotatedBy = %v, want %v", want.Name, g.AnnotatedBy, want.AnnotatedBy)
 		}
-		if r.Description != o.Description {
-			t.Errorf("[%d] description: expected %q, got %q", i, o.Description, r.Description)
+		if len(g.Evidence) != len(want.Evidence) {
+			t.Errorf("%s: evidence count = %d, want %d", want.Name, len(g.Evidence), len(want.Evidence))
+			continue
+		}
+		// Evidence is emitted in ListEvidenceByProject's ORDER BY
+		// file_path, start_line. Sort expected the same way via a
+		// name-keyed lookup.
+		wantByKey := map[string]EvidenceJSON{}
+		for _, e := range want.Evidence {
+			wantByKey[e.File] = e
+		}
+		for _, g := range g.Evidence {
+			w, ok := wantByKey[g.File]
+			if !ok {
+				t.Errorf("%s: unexpected evidence file %q", want.Name, g.File)
+				continue
+			}
+			if g.Line != w.Line {
+				t.Errorf("%s/%s: line = %d, want %d", want.Name, g.File, g.Line, w.Line)
+			}
+			if (g.End == nil) != (w.End == nil) {
+				t.Errorf("%s/%s: end nil mismatch: got %v want %v", want.Name, g.File, g.End, w.End)
+			} else if g.End != nil && *g.End != *w.End {
+				t.Errorf("%s/%s: end = %d, want %d", want.Name, g.File, *g.End, *w.End)
+			}
+			if g.Role != w.Role {
+				t.Errorf("%s/%s: role = %q, want %q", want.Name, g.File, g.Role, w.Role)
+			}
+			if g.Category != w.Category {
+				t.Errorf("%s/%s: category = %q, want %q", want.Name, g.File, g.Category, w.Category)
+			}
+			if g.Severity != w.Severity {
+				t.Errorf("%s/%s: severity = %q, want %q", want.Name, g.File, g.Severity, w.Severity)
+			}
 		}
 	}
+}
+
+// sameStringSet compares two slices as sets (order-independent).
+func sameStringSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	m := map[string]int{}
+	for _, s := range a {
+		m[s]++
+	}
+	for _, s := range b {
+		m[s]--
+	}
+	for _, n := range m {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func TestImportAnnotations_EmptyArray_Succeeds(t *testing.T) {
@@ -327,7 +422,7 @@ func TestImportAnnotations_EmptyArray_Succeeds(t *testing.T) {
 	}
 }
 
-func TestExportAnnotations_NoAnnotations_ReturnsEmptyArray(t *testing.T) {
+func TestExportAnnotations_NoAnnotations_ReturnsEmptyEnvelope(t *testing.T) {
 	s := setupTestStore(t)
 	svc := New(s)
 
@@ -343,9 +438,15 @@ func TestExportAnnotations_NoAnnotations_ReturnsEmptyArray(t *testing.T) {
 		t.Fatalf("ExportAnnotations: %v", err)
 	}
 
-	// Should be an empty JSON array
-	if string(data) != "[]" {
-		t.Errorf("expected empty JSON array '[]', got %q", string(data))
+	// Empty export is still the new-format envelope with an empty
+	// vulnerabilities array — the format discriminator is the '{',
+	// so emitting '[]' here would make re-import misclassify as legacy.
+	var env vulnFileEnvelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(env.Vulnerabilities) != 0 {
+		t.Errorf("expected 0 vulnerabilities, got %d", len(env.Vulnerabilities))
 	}
 }
 

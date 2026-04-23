@@ -373,6 +373,35 @@ func (s *Store) AddVulnAnnotator(ctx context.Context, vulnID int64, annotatedBy 
 	return nil
 }
 
+// ListVulnAnnotatorsByProject returns the annotator list per
+// vulnerability for a project. Map[vulnID][]annotator — mirror of
+// ListVulnCWEs, used by the exporter to reconstitute the
+// annotated_by array.
+func (s *Store) ListVulnAnnotatorsByProject(ctx context.Context, projectID int64) (map[int64][]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT a.vuln_id, a.annotated_by
+		FROM vuln_annotators a
+		JOIN vulnerabilities v ON v.id = a.vuln_id
+		WHERE v.project_id = ?
+		ORDER BY a.vuln_id, a.annotated_by
+	`, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("query vuln annotators: %w", err)
+	}
+	defer rows.Close()
+
+	out := map[int64][]string{}
+	for rows.Next() {
+		var vid int64
+		var a string
+		if err := rows.Scan(&vid, &a); err != nil {
+			return nil, fmt.Errorf("scan vuln annotator: %w", err)
+		}
+		out[vid] = append(out[vid], a)
+	}
+	return out, rows.Err()
+}
+
 // VulnConsensus returns how many distinct annotators agree each
 // vulnerability exists. 1 = single annotator's call; 3 = strong
 // consensus. Compare's --min-consensus filter reads this.

@@ -313,7 +313,14 @@ func (s *Service) ImportAnnotations(ctx context.Context, projectName, filePath s
 	return len(annotations), nil
 }
 
-// ExportAnnotations exports all annotations for a project as JSON.
+// ExportAnnotations exports all vulnerabilities for a project as JSON
+// in the new {"vulnerabilities": [...]} envelope — the same shape
+// ImportAnnotations expects on the new-format path. Exporting via the
+// legacy AnnotationJSON array would drop CWE sets (keep one of N),
+// annotator lists (keep one of N), criticality, and evidence
+// grouping — every multi-evidence vuln would fan out into independent
+// single-evidence entries. Round-tripping needs to preserve those, so
+// the exporter reads straight from the vuln tables.
 func (s *Service) ExportAnnotations(ctx context.Context, projectName string) ([]byte, error) {
 	// Find project by name
 	project, err := s.store.GetProjectByName(ctx, projectName)
@@ -324,67 +331,68 @@ func (s *Service) ExportAnnotations(ctx context.Context, projectName string) ([]
 		return nil, fmt.Errorf("get project: %w", err)
 	}
 
-	// Get annotations
-	annotations, err := s.store.ListAnnotationsByProject(ctx, project.ID)
+	vulns, err := s.store.ListVulnerabilitiesByProject(ctx, project.ID)
 	if err != nil {
-		return nil, fmt.Errorf("list annotations: %w", err)
+		return nil, fmt.Errorf("list vulnerabilities: %w", err)
 	}
-
-	// Load group memberships
-	allGroups, err := s.store.ListAnnotationGroupsByProject(ctx, project.ID)
+	cwes, err := s.store.ListVulnCWEs(ctx, project.ID)
 	if err != nil {
-		return nil, fmt.Errorf("list groups: %w", err)
+		return nil, fmt.Errorf("list vuln cwes: %w", err)
+	}
+	annotators, err := s.store.ListVulnAnnotatorsByProject(ctx, project.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list vuln annotators: %w", err)
+	}
+	evidence, err := s.store.ListEvidenceByProject(ctx, project.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list evidence: %w", err)
 	}
 
-	// Build annotation → group name map
-	annotationGroupName := make(map[int64]string)
-	for _, g := range allGroups {
-		members, err := s.store.ListGroupMembers(ctx, g.ID)
-		if err != nil {
-			continue
-		}
-		name := fmt.Sprintf("group-%d", g.ID)
-		if g.Name.Valid && g.Name.String != "" {
-			name = g.Name.String
-		}
-		for _, m := range members {
-			annotationGroupName[m.AnnotationID] = name
-		}
+	// Bucket evidence by vuln — ListEvidenceByProject returns every
+	// evidence row across the project in one pass; per-vuln round
+	// trips would be N+1.
+	evByVuln := make(map[int64][]store.Evidence, len(vulns))
+	for _, e := range evidence {
+		evByVuln[e.VulnID] = append(evByVuln[e.VulnID], e)
 	}
 
-	// Convert to JSON format
-	jsonAnnotations := make([]AnnotationJSON, 0, len(annotations))
-	for _, a := range annotations {
-		ja := AnnotationJSON{
-			FilePath:  a.FilePath,
-			StartLine: a.StartLine,
-			Category:  a.Category,
-			Severity:  a.Severity,
-			Status:    string(a.Status),
+	env := vulnFileEnvelope{
+		Vulnerabilities: make([]VulnerabilityJSON, 0, len(vulns)),
+	}
+	for _, v := range vulns {
+		vj := VulnerabilityJSON{
+			Name:        v.Name,
+			Criticality: v.Criticality,
+			Status:      v.Status,
+			CWEs:        cwes[v.ID],
+			AnnotatedBy: annotators[v.ID],
+		}
+		if v.Description.Valid {
+			vj.Description = v.Description.String
 		}
 
-		if a.EndLine.Valid {
-			endLine := int(a.EndLine.Int64)
-			ja.EndLine = &endLine
+		ev := evByVuln[v.ID]
+		vj.Evidence = make([]EvidenceJSON, 0, len(ev))
+		for _, e := range ev {
+			ej := EvidenceJSON{
+				File:     e.FilePath,
+				Line:     e.StartLine,
+				Role:     e.Role,
+				Category: e.Category,
+				Severity: e.Severity,
+			}
+			if e.EndLine.Valid {
+				end := int(e.EndLine.Int64)
+				ej.End = &end
+			}
+			vj.Evidence = append(vj.Evidence, ej)
 		}
 
-		if a.CWEID.Valid {
-			ja.CWEID = a.CWEID.String
-		}
-
-		if a.Description.Valid {
-			ja.Description = a.Description.String
-		}
-
-		if gName, ok := annotationGroupName[a.ID]; ok {
-			ja.Group = gName
-		}
-
-		jsonAnnotations = append(jsonAnnotations, ja)
+		env.Vulnerabilities = append(env.Vulnerabilities, vj)
 	}
 
 	// Marshal with indentation for readability
-	data, err := json.MarshalIndent(jsonAnnotations, "", "  ")
+	data, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("marshal JSON: %w", err)
 	}
