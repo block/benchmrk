@@ -363,7 +363,7 @@ if [ ${#SCANNERS_REGISTERED[@]} -lt 2 ]; then
     "$BENCHMRK" scanner list
 else
     info "Comparing: ${SCANNERS_REGISTERED[*]}"
-    "$BENCHMRK" compare "${SCANNERS_REGISTERED[@]}" --project "$PROJECT_NAME"
+    "$BENCHMRK" compare "${SCANNERS_REGISTERED[@]}" --project "$PROJECT_NAME" --coverage
 fi
 
 # ── Step 8: Show individual analysis ──────────────────────────────────────────
