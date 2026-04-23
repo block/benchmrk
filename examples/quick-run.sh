@@ -33,14 +33,14 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BENCHMRK="$REPO_ROOT/bin/benchmrk"
-# NOTE: The default corpus below is a private repo. External users
-# should set CORPUS_REPO to a repository they can clone — any codebase
-# with a matching annotations file works. See examples/README.md for
-# public alternatives (Juice Shop, WebGoat).
-CORPUS_DIR="${CORPUS_DIR:-/tmp/vulnerable-todoapp}"
-CORPUS_REPO="${CORPUS_REPO:-org-49461806@github.com:squareup/personal-ccarpene-blk-vulnerable-todoapp.git}"
-PROJECT_NAME="${PROJECT_NAME:-vulnerable-todoapp}"
-ANNOTATIONS="$REPO_ROOT/sample-app-annotations.json"
+# Default corpus is OWASP Juice Shop, which matches the bundled
+# annotations at examples/annotations/juice-shop-vulns.json. Override
+# CORPUS_REPO/CORPUS_DIR/PROJECT_NAME/ANNOTATIONS to point at a
+# different codebase — any repo with a matching annotations file works.
+CORPUS_DIR="${CORPUS_DIR:-/tmp/juice-shop}"
+CORPUS_REPO="${CORPUS_REPO:-https://github.com/juice-shop/juice-shop}"
+PROJECT_NAME="${PROJECT_NAME:-juice-shop}"
+ANNOTATIONS="${ANNOTATIONS:-$REPO_ROOT/examples/annotations/juice-shop-vulns.json}"
 EXAMPLES_DIR="$REPO_ROOT/examples"
 
 # Parse flags
@@ -128,17 +128,18 @@ else
     info "Cloning $CORPUS_REPO..."
     if ! git clone "$CORPUS_REPO" "$CORPUS_DIR" 2>&1; then
         echo
-        echo "ERROR: Could not clone the default corpus repo."
+        echo "ERROR: Could not clone $CORPUS_REPO into $CORPUS_DIR."
         echo
-        echo "The default is a private Square repository. To use your own corpus:"
+        echo "To use a different corpus, override the defaults:"
         echo
-        echo "  CORPUS_REPO=https://github.com/juice-shop/juice-shop \\"
-        echo "  CORPUS_DIR=/tmp/juice-shop \\"
-        echo "  PROJECT_NAME=juice-shop \\"
+        echo "  CORPUS_REPO=<git url> \\"
+        echo "  CORPUS_DIR=<local path> \\"
+        echo "  PROJECT_NAME=<name> \\"
+        echo "  ANNOTATIONS=<path to annotations .json> \\"
         echo "    $0"
         echo
-        echo "You'll also need an annotation file for that corpus — see"
-        echo "examples/README.md and examples/juice-shop-vulns.json."
+        echo "See examples/README.md for guidance on preparing a corpus and"
+        echo "examples/annotations/ for annotation-file examples."
         exit 1
     fi
     ok "Cloned to $CORPUS_DIR"
