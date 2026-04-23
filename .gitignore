@@ -1,0 +1,54 @@
+# Binaries
+bin/
+/benchmrk
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test files
+test.db
+test-*
+juice-*
+*.test
+*.out
+coverage.html
+coverage.out
+
+# Generated reports
+reports/*.html
+
+# Database files
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# IDE and editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Go
+vendor/
+
+# Scanner output
+output/
+
+# Agent/tool directories
+.claude/
+.beads/
+.perles/
+thoughts/
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Scanners
+scanners/
