@@ -321,7 +321,7 @@ var annotateHistoryCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "HASH\tVULNS\tFORMAT\tGIT SHA\tSOURCE\tIMPORTED")
+		fmt.Fprintln(w, "HASH\tVULNS\tGIT SHA\tSOURCE\tIMPORTED")
 		for _, s := range sets {
 			sha := "-"
 			if s.GitSHA.Valid {
@@ -331,8 +331,8 @@ var annotateHistoryCmd = &cobra.Command{
 			if s.SourcePath.Valid {
 				src = s.SourcePath.String
 			}
-			fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\t%s\n",
-				s.Hash, s.VulnCount, s.Format, sha, src,
+			fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\n",
+				s.Hash, s.VulnCount, sha, src,
 				s.ImportedAt.Format("2006-01-02 15:04"))
 		}
 		w.Flush()

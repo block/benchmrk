@@ -41,8 +41,7 @@ security report, CVE, fix PR, or code review).
 
 ### Format
 
-Top level is an object (the `{` is how benchmrk distinguishes this from
-the legacy flat-array format):
+Top level is an object — the only shape benchmrk's importer accepts:
 
 ```json
 {
@@ -135,13 +134,6 @@ the legacy flat-array format):
 5. **Use repository-relative paths.** `routes/order.js`, not
    `/tmp/juice-shop/routes/order.js`. The matcher normalizes common
    prefixes but don't rely on it.
-
-6. **If converting from the legacy format** (flat array with `group`
-   field): each group becomes one vulnerability, members become
-   `evidence` rows, distinct CWEs across members become the `cwes`
-   array. Ungrouped entries become single-evidence vulnerabilities. The
-   legacy import path still works but drops the `group` field with a
-   warning.
 
 ### Import and verify
 
@@ -559,4 +551,3 @@ workflows:
 |---|---|---|
 | `annotate group` | Group-write methods error; groups are now multi-evidence vulns | Edit the JSON, use `evidence[]` |
 | `annotate ungroup` | Same | Same |
-| Legacy annotation JSON (flat array) | Loses the `group` field on import | Vulnerability format (top-level `{}`) |

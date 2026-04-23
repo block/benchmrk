@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -132,11 +133,22 @@ func TestImportAnnotations_ParsesJSONAndInserts(t *testing.T) {
 		t.Fatalf("AddProject: %v", err)
 	}
 
-	// Create JSON file
-	jsonData := `[
-		{"file_path": "auth.go", "start_line": 10, "cwe_id": "CWE-89", "category": "sql-injection", "severity": "high", "description": "SQL injection"},
-		{"file_path": "user.go", "start_line": 20, "end_line": 25, "cwe_id": "CWE-79", "category": "xss", "severity": "medium"}
-	]`
+	// Vulnerability envelope — the only shape accepted by the importer.
+	jsonData := `{
+		"vulnerabilities": [
+			{
+				"name": "auth-sqli",
+				"description": "SQL injection",
+				"cwes": ["CWE-89"],
+				"evidence": [{"file": "auth.go", "line": 10, "category": "sql-injection", "severity": "high"}]
+			},
+			{
+				"name": "user-xss",
+				"cwes": ["CWE-79"],
+				"evidence": [{"file": "user.go", "line": 20, "end": 25, "category": "xss", "severity": "medium"}]
+			}
+		]
+	}`
 	jsonFile := filepath.Join(t.TempDir(), "annotations.json")
 	if err := os.WriteFile(jsonFile, []byte(jsonData), 0644); err != nil {
 		t.Fatalf("write json file: %v", err)
@@ -147,11 +159,12 @@ func TestImportAnnotations_ParsesJSONAndInserts(t *testing.T) {
 		t.Fatalf("ImportAnnotations: %v", err)
 	}
 
+	// Count is evidence rows — one per vuln here.
 	if count != 2 {
-		t.Errorf("expected 2 imported, got %d", count)
+		t.Errorf("expected 2 evidence rows imported, got %d", count)
 	}
 
-	// Verify they exist
+	// Verify via the compat shim (each evidence row surfaces as one Annotation).
 	annotations, err := svc.ListAnnotations(ctx, "import-test")
 	if err != nil {
 		t.Fatalf("ListAnnotations: %v", err)
@@ -159,6 +172,34 @@ func TestImportAnnotations_ParsesJSONAndInserts(t *testing.T) {
 
 	if len(annotations) != 2 {
 		t.Errorf("expected 2 annotations after import, got %d", len(annotations))
+	}
+}
+
+func TestImportAnnotations_NonObjectShape_Rejected(t *testing.T) {
+	s := setupTestStore(t)
+	svc := New(s)
+
+	testDir := createTestDir(t, map[string]string{"main.go": "package main"})
+	ctx := context.Background()
+	_, err := svc.AddProject(ctx, "shape-reject", testDir, "go", "")
+	if err != nil {
+		t.Fatalf("AddProject: %v", err)
+	}
+
+	// Anything that isn't the {"vulnerabilities": [...]} envelope must
+	// be rejected at the shape guard with an actionable error.
+	jsonData := `[{"file": "auth.go", "line": 10}]`
+	jsonFile := filepath.Join(t.TempDir(), "wrong-shape.json")
+	if err := os.WriteFile(jsonFile, []byte(jsonData), 0644); err != nil {
+		t.Fatalf("write json file: %v", err)
+	}
+
+	_, err = svc.ImportAnnotations(ctx, "shape-reject", jsonFile)
+	if err == nil {
+		t.Fatal("expected error for non-object shape, got nil")
+	}
+	if !strings.Contains(err.Error(), "{") || !strings.Contains(err.Error(), "vulnerabilities") {
+		t.Errorf("error should mention the required '{\"vulnerabilities\": ...}' shape, got: %v", err)
 	}
 }
 
@@ -196,9 +237,8 @@ func TestExportAnnotations_ProducesValidJSON(t *testing.T) {
 		t.Fatalf("AddProject: %v", err)
 	}
 
-	// AddAnnotation (legacy surface) creates a solo vulnerability
-	// with one evidence row — export should reflect it as a
-	// single-entry envelope.
+	// AddAnnotation creates a solo vulnerability with one evidence
+	// row — export should reflect it as a single-entry envelope.
 	endLine := 15
 	_, err = svc.AddAnnotation(ctx, "export-test", "auth.go", 10, &endLine, "CWE-89", "sql-injection", "high", "SQL injection", "valid")
 	if err != nil {
@@ -242,10 +282,9 @@ func TestImportExport_RoundTrip_PreservesFields(t *testing.T) {
 		t.Fatalf("AddProject: %v", err)
 	}
 
-	// Round-trip the new-format vulnerability envelope. This exercises
-	// the fields a legacy []AnnotationJSON export would drop: the CWE
-	// set (>1 per vuln), the annotator list, criticality, and
-	// multi-evidence vulns.
+	// Round-trip the vulnerability envelope. Exercises every field a
+	// lossy per-evidence export would drop: the CWE set (>1 per vuln),
+	// the annotator list, criticality, and multi-evidence vulns.
 	original := vulnFileEnvelope{
 		Vulnerabilities: []VulnerabilityJSON{
 			{
@@ -395,7 +434,7 @@ func sameStringSet(a, b []string) bool {
 	return true
 }
 
-func TestImportAnnotations_EmptyArray_Succeeds(t *testing.T) {
+func TestImportAnnotations_EmptyEnvelope_Rejected(t *testing.T) {
 	s := setupTestStore(t)
 	svc := New(s)
 
@@ -406,19 +445,16 @@ func TestImportAnnotations_EmptyArray_Succeeds(t *testing.T) {
 		t.Fatalf("AddProject: %v", err)
 	}
 
-	// Create empty JSON array file
+	// An envelope with no vulnerabilities is an error — a no-op
+	// "import" is almost always a mistake the user wants to hear about.
 	jsonFile := filepath.Join(t.TempDir(), "empty.json")
-	if err := os.WriteFile(jsonFile, []byte("[]"), 0644); err != nil {
+	if err := os.WriteFile(jsonFile, []byte(`{"vulnerabilities": []}`), 0644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
 
-	count, err := svc.ImportAnnotations(ctx, "empty-import", jsonFile)
-	if err != nil {
-		t.Fatalf("ImportAnnotations: %v", err)
-	}
-
-	if count != 0 {
-		t.Errorf("expected 0 imported for empty array, got %d", count)
+	_, err = svc.ImportAnnotations(ctx, "empty-import", jsonFile)
+	if err == nil {
+		t.Error("expected error for empty vulnerabilities array, got nil")
 	}
 }
 
@@ -438,9 +474,10 @@ func TestExportAnnotations_NoAnnotations_ReturnsEmptyEnvelope(t *testing.T) {
 		t.Fatalf("ExportAnnotations: %v", err)
 	}
 
-	// Empty export is still the new-format envelope with an empty
-	// vulnerabilities array — the format discriminator is the '{',
-	// so emitting '[]' here would make re-import misclassify as legacy.
+	// Empty export is still the envelope with an empty
+	// vulnerabilities array — it must still parse as the canonical
+	// shape so that re-importing an empty file fails the way it would
+	// for any other wrong-shape file, not silently succeed.
 	var env vulnFileEnvelope
 	if err := json.Unmarshal(data, &env); err != nil {
 		t.Fatalf("unmarshal: %v", err)

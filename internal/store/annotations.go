@@ -305,9 +305,9 @@ func (s *Store) DeleteAnnotationsByProject(ctx context.Context, projectID int64)
 }
 
 // BulkCreateAnnotations inserts N single-evidence vulns in one
-// transaction. This is the legacy-format import path; the new
-// VulnerabilityJSON format goes through BulkCreateVulnerabilities
-// instead.
+// transaction via the Annotation compat type. Retained alongside the
+// Annotation shim for one-row-at-a-time callers; the file-import path
+// uses BulkCreateVulnerabilities directly.
 func (s *Store) BulkCreateAnnotations(ctx context.Context, annotations []Annotation) error {
 	if len(annotations) == 0 {
 		return nil

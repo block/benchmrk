@@ -16,8 +16,7 @@ your own.
 
 | | |
 |---|---|
-| `juice-shop-vulns.json` | Ground truth for OWASP Juice Shop, new format. Shows multi-evidence vulns, CWE sets, criticality tiers, valid and invalid entries. |
-| `legacy-format.json`    | Same vulns in the legacy flat-array format. Imports but drops grouping. |
+| `annotations/juice-shop-vulns.json` | Ground truth for OWASP Juice Shop. Shows multi-evidence vulns, CWE sets, criticality tiers, valid and invalid entries. |
 | `wrappers/semgrep.sh`   | Local wrapper, parameterized by `SEMGREP_RULES` env var. |
 | `wrappers/bandit.sh`    | Local wrapper for Python's bandit. |
 | `wrappers/codeql.sh`    | Local wrapper for GitHub CodeQL. Slow; raise `--timeout`. |
@@ -35,7 +34,7 @@ go build -o bin/benchmrk ./cmd/benchmrk
 
 git clone https://github.com/juice-shop/juice-shop /tmp/juice-shop
 ./bin/benchmrk corpus add juice-shop --source /tmp/juice-shop
-./bin/benchmrk annotate import juice-shop --file examples/juice-shop-vulns.json
+./bin/benchmrk annotate import juice-shop --file examples/annotations/juice-shop-vulns.json
 
 ./bin/benchmrk scanner register semgrep-auto \
   --version "$(semgrep --version)" \

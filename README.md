@@ -268,8 +268,6 @@ Key points:
 - **`status: invalid`** marks known false-positive bait — code that *looks* vulnerable but isn't. A tool that stays quiet scores a TN; one that reports it scores an FP. This is how you measure precision without running the tool on the whole internet.
 - **`annotated_by`** is the consensus mechanism. More names = higher consensus = more trustworthy ground truth.
 
-The legacy flat-array format still imports (one annotation → one single-evidence vulnerability). See [examples/](examples/) for both.
-
 ---
 
 ## Where it excels
@@ -373,7 +371,7 @@ Both directions feed the benchmark: `tp` becomes a new thing future scanners sho
 | `benchmrk annotate diff <hash-a> <hash-b>` | Explain what changed between two annotation sets |
 | `benchmrk annotate add <project> --file <f> --line <n> --cwe <id> --category <c> --severity <s>` | Add one entry (compat path) |
 | `benchmrk annotate update <id> [flags]` / `delete <id>` | Edit or remove a single entry |
-| `benchmrk annotate groups <project>` | List vulnerabilities with multiple evidence rows (legacy view) |
+| `benchmrk annotate groups <project>` | List vulnerabilities with multiple evidence rows |
 | **Scanners** | |
 | `benchmrk scanner register <name> -V <ver> -m local -e <script>` | Register a local scanner |
 | `benchmrk scanner register <name> -V <ver> -i <image>` | Register a Docker scanner |

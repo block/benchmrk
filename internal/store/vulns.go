@@ -59,7 +59,7 @@ type AnnotationSet struct {
 	SourcePath sql.NullString
 	GitSHA     sql.NullString
 	VulnCount  int
-	Format     string // legacy | vulnerability
+	Format     string // import-format tag written by the importer
 	ImportedAt time.Time
 }
 
@@ -433,9 +433,8 @@ func (s *Store) VulnConsensus(ctx context.Context, projectID int64) (map[int64]i
 // ── Bulk import ─────────────────────────────────────────────────────
 
 // BulkCreateVulnerabilities inserts a set of vulnerabilities with their
-// evidence, CWEs, and annotators in one transaction. This is the
-// new-format import path — the old AnnotationJSON format goes through
-// the compat shim's BulkCreateAnnotations instead.
+// evidence, CWEs, and annotators in one transaction. This is the sole
+// file-import path.
 func (s *Store) BulkCreateVulnerabilities(ctx context.Context, vulns []VulnWithDetail) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -12,9 +12,8 @@ import (
 	"github.com/block/benchmrk/internal/store"
 )
 
-// VulnerabilityJSON is the post-010 import format. The top-level file
-// is {"vulnerabilities": [...]} — the object wrapper is what
-// distinguishes this from the legacy flat array.
+// VulnerabilityJSON is the annotation import format. The top-level
+// file is {"vulnerabilities": [...]}.
 //
 // Example:
 //
@@ -64,26 +63,24 @@ type EvidenceJSON struct {
 	Severity string `json:"severity"`
 }
 
-// vulnFileEnvelope is the top-level shape. The "vulnerabilities" key is
-// the format discriminator — ImportAnnotations peeks at the first
-// non-whitespace byte, and if it's '{' (object) it tries this, if '['
-// (array) it falls through to the legacy AnnotationJSON path.
+// vulnFileEnvelope is the top-level shape. ImportAnnotations requires
+// a file whose first non-whitespace byte is '{'; the content must
+// unmarshal into this envelope with a non-empty vulnerabilities array.
 type vulnFileEnvelope struct {
 	Vulnerabilities []VulnerabilityJSON `json:"vulnerabilities"`
 }
 
-// importVulnerabilities is the new-format half of ImportAnnotations.
-// Called after the caller has already looked up the project and read
-// the file. Returns evidence-row count (not vuln count) so the
-// "Imported N annotations" CLI message stays intuitive.
+// importVulnerabilities parses the vulnerability envelope and writes
+// it to the store. Called by ImportAnnotations after the shape guard.
+// Returns evidence-row count (not vuln count) so the "Imported N
+// annotations" CLI message stays intuitive.
 func (s *Service) importVulnerabilities(ctx context.Context, projectID int64, raw []byte, replace bool) (int, error) {
 	var env vulnFileEnvelope
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return 0, fmt.Errorf("parse vulnerability JSON: %w", err)
 	}
 	if len(env.Vulnerabilities) == 0 {
-		return 0, fmt.Errorf(`file has no "vulnerabilities" array (or it is empty); ` +
-			`for the legacy flat-array format, the top-level JSON must start with '['`)
+		return 0, fmt.Errorf(`file has no "vulnerabilities" array (or it is empty)`)
 	}
 
 	// Guardrail 1: in-file duplicates. Two vulns with the same name in
