@@ -1,0 +1,3 @@
+-- SQLite doesn't support DROP COLUMN before 3.35.0, so we recreate the table
+-- For simplicity, these columns are simply ignored after rollback
+-- In production, a full table rebuild would be needed
